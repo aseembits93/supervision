@@ -66,19 +66,27 @@ def box_iou_batch(boxes_true: np.ndarray, boxes_detection: np.ndarray) -> np.nda
             `M` is number of detected objects.
     """
 
-    def box_area(box):
-        return (box[2] - box[0]) * (box[3] - box[1])
+    def box_area(x_min, y_min, x_max, y_max):
+        return (x_max - x_min) * (y_max - y_min)
 
-    area_true = box_area(boxes_true.T)
-    area_detection = box_area(boxes_detection.T)
+    # Precompute areas of the boxes
+    area_true = box_area(boxes_true[:, 0], boxes_true[:, 1], boxes_true[:, 2], boxes_true[:, 3])
+    area_detection = box_area(boxes_detection[:, 0], boxes_detection[:, 1], boxes_detection[:, 2], boxes_detection[:, 3])
 
-    top_left = np.maximum(boxes_true[:, None, :2], boxes_detection[:, :2])
-    bottom_right = np.minimum(boxes_true[:, None, 2:], boxes_detection[:, 2:])
+    # Broadcast box coordinates for pairwise computation
+    x_min_inter = np.maximum(boxes_true[:, None, 0], boxes_detection[:, 0])
+    y_min_inter = np.maximum(boxes_true[:, None, 1], boxes_detection[:, 1])
+    x_max_inter = np.minimum(boxes_true[:, None, 2], boxes_detection[:, 2])
+    y_max_inter = np.minimum(boxes_true[:, None, 3], boxes_detection[:, 3])
 
-    area_inter = np.prod(np.clip(bottom_right - top_left, a_min=0, a_max=None), 2)
+    # Compute intersection area
+    width_inter = np.clip(x_max_inter - x_min_inter, a_min=0, a_max=None)
+    height_inter = np.clip(y_max_inter - y_min_inter, a_min=0, a_max=None)
+    area_inter = width_inter * height_inter
+
+    # Compute IoU
     ious = area_inter / (area_true[:, None] + area_detection - area_inter)
-    ious = np.nan_to_num(ious)
-    return ious
+    return np.nan_to_num(ious)
 
 
 def _mask_iou_batch_split(
