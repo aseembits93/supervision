@@ -372,16 +372,24 @@ def mask_to_xyxy(masks: np.ndarray) -> np.ndarray:
         np.ndarray: A 2D `np.array` of shape `(N, 4)` containing the bounding boxes
             `(x_min, y_min, x_max, y_max)` for each mask
     """
+    # Pre-allocating output array
     n = masks.shape[0]
     xyxy = np.zeros((n, 4), dtype=int)
 
-    for i, mask in enumerate(masks):
-        rows, cols = np.where(mask)
+    # Using vectorized operations
+    # Find the bounds across the third dimension
+    any_mask = masks.any(axis=2)
+    y_mins = np.argmax(any_mask, axis=1)
+    y_maxs = masks.shape[1] - 1 - np.argmax(any_mask[:, ::-1], axis=1)
 
-        if len(rows) > 0 and len(cols) > 0:
-            x_min, x_max = np.min(cols), np.max(cols)
-            y_min, y_max = np.min(rows), np.max(rows)
-            xyxy[i, :] = [x_min, y_min, x_max, y_max]
+    any_mask = masks.any(axis=1)
+    x_mins = np.argmax(any_mask, axis=1)
+    x_maxs = masks.shape[2] - 1 - np.argmax(any_mask[:, ::-1], axis=1)
+
+    xyxy[:, 0] = x_mins
+    xyxy[:, 1] = y_mins
+    xyxy[:, 2] = x_maxs
+    xyxy[:, 3] = y_maxs
 
     return xyxy
 
