@@ -50,34 +50,36 @@ def polygon_to_mask(polygon: np.ndarray, resolution_wh: Tuple[int, int]) -> np.n
 
 def box_iou_batch(boxes_true: np.ndarray, boxes_detection: np.ndarray) -> np.ndarray:
     """
-    Compute Intersection over Union (IoU) of two sets of bounding boxes -
-        `boxes_true` and `boxes_detection`. Both sets
-        of boxes are expected to be in `(x_min, y_min, x_max, y_max)` format.
+    Compute Intersection over Union (IoU) of two sets of bounding boxes.
+    Uses vectorized operations for fast computation.
 
     Args:
         boxes_true (np.ndarray): 2D `np.ndarray` representing ground-truth boxes.
-            `shape = (N, 4)` where `N` is number of true objects.
+            `shape = (N, 4)`.
         boxes_detection (np.ndarray): 2D `np.ndarray` representing detection boxes.
-            `shape = (M, 4)` where `M` is number of detected objects.
+            `shape = (M, 4)`.
 
     Returns:
         np.ndarray: Pairwise IoU of boxes from `boxes_true` and `boxes_detection`.
-            `shape = (N, M)` where `N` is number of true objects and
-            `M` is number of detected objects.
+            `shape = (N, M)`.
     """
 
     def box_area(box):
+        # Compute area using broadcasting for all boxes, optimizing the call for multiple boxes
         return (box[2] - box[0]) * (box[3] - box[1])
 
-    area_true = box_area(boxes_true.T)
-    area_detection = box_area(boxes_detection.T)
+    area_true = box_area(boxes_true.T).reshape(-1, 1)
+    area_detection = box_area(boxes_detection.T).reshape(1, -1)
 
+    # Vectorized computations
     top_left = np.maximum(boxes_true[:, None, :2], boxes_detection[:, :2])
     bottom_right = np.minimum(boxes_true[:, None, 2:], boxes_detection[:, 2:])
 
-    area_inter = np.prod(np.clip(bottom_right - top_left, a_min=0, a_max=None), 2)
-    ious = area_inter / (area_true[:, None] + area_detection - area_inter)
-    ious = np.nan_to_num(ious)
+    intersection_wh = np.clip(bottom_right - top_left, 0, None)
+    area_inter = intersection_wh[:, :, 0] * intersection_wh[:, :, 1]
+    union = area_true + area_detection - area_inter
+
+    ious = area_inter / union
     return ious
 
 
@@ -244,45 +246,20 @@ def pad_boxes(xyxy: np.ndarray, px: int, py: Optional[int] = None) -> np.ndarray
     Pads bounding boxes coordinates with a constant padding.
 
     Args:
-        xyxy (np.ndarray): A numpy array of shape `(N, 4)` where each
-            row corresponds to a bounding box in the format
-            `(x_min, y_min, x_max, y_max)`.
-        px (int): The padding value to be added to both the left and right sides of
-            each bounding box.
-        py (Optional[int]): The padding value to be added to both the top and bottom
-            sides of each bounding box. If not provided, `px` will be used for both
-            dimensions.
+        xyxy (np.ndarray): Array of bounding boxes.
+            `shape = (N, 4)` and format `(x_min, y_min, x_max, y_max)`.
+        px (int): Padding for x-axis.
+        py (Optional[int]): Padding for y-axis. If None, `px` is used for both.
 
     Returns:
-        np.ndarray: A numpy array of shape `(N, 4)` where each row corresponds to a
-            bounding box with coordinates padded according to the provided padding
-            values.
-
-    Examples:
-        ```python
-        import numpy as np
-        import supervision as sv
-
-        xyxy = np.array([
-            [10, 20, 30, 40],
-            [15, 25, 35, 45]
-        ])
-
-        sv.pad_boxes(xyxy=xyxy, px=5, py=10)
-        # array([
-        #     [ 5, 10, 35, 50],
-        #     [10, 15, 40, 55]
-        # ])
-        ```
+        np.ndarray: Padded bounding boxes.
     """
+    # Use `numpy` broadcasting to apply padding
     if py is None:
         py = px
 
-    result = xyxy.copy()
-    result[:, [0, 1]] -= [px, py]
-    result[:, [2, 3]] += [px, py]
-
-    return result
+    padding = np.array([px, py, px, py])
+    return xyxy + np.array([-1, -1, 1, 1]) * padding
 
 
 def xywh_to_xyxy(xywh: np.ndarray) -> np.ndarray:
@@ -1192,49 +1169,46 @@ def spread_out_boxes(
     Spread out boxes that overlap with each other.
 
     Args:
-        xyxy: Numpy array of shape (N, 4) where N is the number of boxes.
-        max_iterations: Maximum number of iterations to run the algorithm for.
+        xyxy: Numpy array of shape (N, 4).
+        max_iterations: Maximum number of iterations.
     """
     if len(xyxy) == 0:
         return xyxy
 
-    xyxy_padded = pad_boxes(xyxy, px=1)
+    # Precompute centers to minimize recomputation
+    xyxy_padded = pad_boxes(xyxy, 1)
+
     for _ in range(max_iterations):
-        # NxN
         iou = box_iou_batch(xyxy_padded, xyxy_padded)
         np.fill_diagonal(iou, 0)
         if np.all(iou == 0):
             break
 
-        overlap_mask = iou > 0
-
-        # Nx2
+        # Precompute centers and apply mask to get deltas
         centers = (xyxy_padded[:, :2] + xyxy_padded[:, 2:]) / 2
+        delta_centers = centers[:, None, :] - centers[None, :, :]
+        delta_centers *= np.expand_dims(iou > 0, axis=-1)
 
-        # NxNx2
-        delta_centers = centers[:, np.newaxis, :] - centers[np.newaxis, :, :]
-        delta_centers *= overlap_mask[:, :, np.newaxis]
-
-        # Nx2
-        delta_sum = np.sum(delta_centers, axis=1)
+        delta_sum = delta_centers.sum(axis=1)
         delta_magnitude = np.linalg.norm(delta_sum, axis=1, keepdims=True)
+
+        # Use numpy masked division to avoid dividing by zero
         direction_vectors = np.divide(
-            delta_sum,
-            delta_magnitude,
+            delta_sum, delta_magnitude,
             out=np.zeros_like(delta_sum),
-            where=delta_magnitude != 0,
+            where=delta_magnitude != 0
         )
 
-        force_vectors = np.sum(iou, axis=1)
-        force_vectors = force_vectors[:, np.newaxis] * direction_vectors
-
-        force_vectors *= 10
+        # Apply force and update boxes
+        force_magnitude = iou.sum(axis=1, keepdims=True)
+        force_vectors = force_magnitude * direction_vectors * 10
         force_vectors[(force_vectors > 0) & (force_vectors < 2)] = 2
         force_vectors[(force_vectors < 0) & (force_vectors > -2)] = -2
 
+        # Leverage integer-only operations to adjust coordinates
         force_vectors = force_vectors.astype(int)
 
-        xyxy_padded[:, [0, 1]] += force_vectors
-        xyxy_padded[:, [2, 3]] += force_vectors
+        xyxy_padded[:, :2] += force_vectors
+        xyxy_padded[:, 2:] += force_vectors
 
-    return pad_boxes(xyxy_padded, px=-1)
+    return pad_boxes(xyxy_padded, -1)
