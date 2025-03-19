@@ -19,16 +19,15 @@ from supervision.detection.utils import (
     polygon_to_mask,
 )
 from supervision.utils.file import read_json_file, save_json_file
+from operator import itemgetter
 
 if TYPE_CHECKING:
     from supervision.dataset.core import DetectionDataset
 
 
 def coco_categories_to_classes(coco_categories: List[dict]) -> List[str]:
-    return [
-        category["name"]
-        for category in sorted(coco_categories, key=lambda category: category["id"])
-    ]
+    # Using itemgetter for fetching the 'id' key for sorting
+    return [category["name"] for category in sorted(coco_categories, key=itemgetter("id"))]
 
 
 def build_coco_class_index_mapping(
