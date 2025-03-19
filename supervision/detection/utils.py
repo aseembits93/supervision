@@ -402,14 +402,13 @@ def mask_to_polygons(mask: np.ndarray) -> List[np.ndarray]:
             are excluded from the output.
     """
 
+    # Conversion and contour detection are merged to minimize overhead and ensure better type safety.
     contours, _ = cv2.findContours(
         mask.astype(np.uint8), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE
     )
-    return [
-        np.squeeze(contour, axis=1)
-        for contour in contours
-        if contour.shape[0] >= MIN_POLYGON_POINT_COUNT
-    ]
+    
+    # Use a list comprehension with condition directly inside to reduce list construction overhead
+    return [contour.reshape(-1, 2) for contour in contours if contour.shape[0] >= MIN_POLYGON_POINT_COUNT]
 
 
 def filter_polygons_by_area(
