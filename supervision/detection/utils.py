@@ -24,9 +24,12 @@ def xyxy_to_polygons(box: np.ndarray) -> np.ndarray:
         np.ndarray: An array of polygons (N, 4, 2), where each polygon is
             represented as a list of four coordinates in the format `(x, y)`.
     """
-    polygon = np.zeros((box.shape[0], 4, 2), dtype=box.dtype)
-    polygon[:, :, 0] = box[:, [0, 2, 2, 0]]
-    polygon[:, :, 1] = box[:, [1, 1, 3, 3]]
+    # Initialize polygon array and fill in x and y coordinates simultaneously
+    polygon = np.empty((box.shape[0], 4, 2), dtype=box.dtype)
+    polygon[:, 0, 0], polygon[:, 0, 1] = box[:, 0], box[:, 1]  # Top-left
+    polygon[:, 1, 0], polygon[:, 1, 1] = box[:, 2], box[:, 1]  # Top-right
+    polygon[:, 2, 0], polygon[:, 2, 1] = box[:, 2], box[:, 3]  # Bottom-right
+    polygon[:, 3, 0], polygon[:, 3, 1] = box[:, 0], box[:, 3]  # Bottom-left
     return polygon
 
 
