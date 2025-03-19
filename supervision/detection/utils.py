@@ -129,33 +129,22 @@ def mask_iou_batch(
     Returns:
         np.ndarray: Pairwise IoU of masks from `masks_true` and `masks_detection`.
     """
-    memory = (
-        masks_true.shape[0]
-        * masks_true.shape[1]
-        * masks_true.shape[2]
-        * masks_detection.shape[0]
-        / 1024
-        / 1024
-    )
-    if memory <= memory_limit:
+    num_true, h, w = masks_true.shape
+    num_det = masks_detection.shape[0]
+    
+    memory_needed = num_true * num_det * h * w * np.dtype(np.uint8).itemsize / 1024 / 1024
+    
+    if memory_needed <= memory_limit:
         return _mask_iou_batch_split(masks_true, masks_detection)
 
     ious = []
     step = max(
-        memory_limit
-        * 1024
-        * 1024
-        // (
-            masks_detection.shape[0]
-            * masks_detection.shape[1]
-            * masks_detection.shape[2]
-        ),
-        1,
+        memory_limit * 1024 * 1024 // (num_det * h * w * np.dtype(np.uint8).itemsize), 1
     )
-    for i in range(0, masks_true.shape[0], step):
-        ious.append(_mask_iou_batch_split(masks_true[i : i + step], masks_detection))
-
-    return np.vstack(ious)
+    for i in range(0, num_true, step):
+        ious.append(_mask_iou_batch_split(masks_true[i:i + step], masks_detection))
+        
+    return np.concatenate(ious, axis=0)
 
 
 def oriented_box_iou_batch(
@@ -185,16 +174,15 @@ def oriented_box_iou_batch(
     # adding 1 because we are 0-indexed
     max_width = int(max(boxes_true[:, :, 1].max(), boxes_detection[:, :, 1].max()) + 1)
 
-    mask_true = np.zeros((boxes_true.shape[0], max_height, max_width))
+    mask_true = np.zeros((boxes_true.shape[0], max_height, max_width), dtype=np.uint8)
     for i, box_true in enumerate(boxes_true):
         mask_true[i] = polygon_to_mask(box_true, (max_width, max_height))
 
-    mask_detection = np.zeros((boxes_detection.shape[0], max_height, max_width))
+    mask_detection = np.zeros((boxes_detection.shape[0], max_height, max_width), dtype=np.uint8)
     for i, box_detection in enumerate(boxes_detection):
         mask_detection[i] = polygon_to_mask(box_detection, (max_width, max_height))
 
-    ious = mask_iou_batch(mask_true, mask_detection)
-    return ious
+    return mask_iou_batch(mask_true, mask_detection)
 
 
 def clip_boxes(xyxy: np.ndarray, resolution_wh: Tuple[int, int]) -> np.ndarray:
