@@ -977,34 +977,23 @@ def merge_metadata(metadata_list: List[Dict[str, Any]]) -> Dict[str, Any]:
     if not metadata_list:
         return {}
 
-    all_keys_sets = [set(metadata.keys()) for metadata in metadata_list]
-    if not all(keys_set == all_keys_sets[0] for keys_set in all_keys_sets):
-        raise ValueError("All metadata dictionaries must have the same keys to merge.")
+    all_keys = metadata_list[0].keys()
+    for metadata in metadata_list:
+        if metadata.keys() != all_keys:
+            raise ValueError("All metadata dictionaries must have the same keys to merge.")
 
     merged_metadata: Dict[str, Any] = {}
-    for metadata in metadata_list:
-        for key, value in metadata.items():
-            if key not in merged_metadata:
-                merged_metadata[key] = value
-                continue
+    for key in all_keys:
+        values = [metadata[key] for metadata in metadata_list]
+        first_value = values[0]
+        
+        if isinstance(first_value, np.ndarray):
+            if not all(isinstance(value, np.ndarray) and np.array_equal(value, first_value) for value in values):
+                raise ValueError(f"Conflicting metadata for key: '{key}'.")
+        elif not all(value == first_value for value in values):
+            raise ValueError(f"Conflicting metadata for key: '{key}'.")
 
-            other_value = merged_metadata[key]
-            if isinstance(value, np.ndarray) and isinstance(other_value, np.ndarray):
-                if not np.array_equal(merged_metadata[key], value):
-                    raise ValueError(
-                        f"Conflicting metadata for key: '{key}': "
-                        "{type(value)}, {type(other_value)}."
-                    )
-            elif isinstance(value, np.ndarray) or isinstance(other_value, np.ndarray):
-                # Since [] == np.array([]).
-                raise ValueError(
-                    f"Conflicting metadata for key: '{key}': "
-                    "{type(value)}, {type(other_value)}."
-                )
-            else:
-                print("hm")
-                if merged_metadata[key] != value:
-                    raise ValueError(f"Conflicting metadata for key: '{key}'.")
+        merged_metadata[key] = first_value
 
     return merged_metadata
 
