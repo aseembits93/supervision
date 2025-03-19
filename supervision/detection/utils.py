@@ -842,17 +842,15 @@ def calculate_masks_centroids(masks: np.ndarray) -> np.ndarray:
     num_masks, height, width = masks.shape
     total_pixels = masks.sum(axis=(1, 2))
 
-    # offset for 1-based indexing
-    vertical_indices, horizontal_indices = np.indices((height, width)) + 0.5
-    # avoid division by zero for empty masks
-    total_pixels[total_pixels == 0] = 1
+    # Avoid division by zero for empty masks and keep 1-based indexing offset
+    total_pixels_safe = np.where(total_pixels == 0, 1, total_pixels)
+    
+    vertical_indices = np.arange(height) + 0.5
+    horizontal_indices = np.arange(width) + 0.5
 
-    def sum_over_mask(indices: np.ndarray, axis: tuple) -> np.ndarray:
-        return np.tensordot(masks, indices, axes=axis)
-
-    aggregation_axis = ([1, 2], [0, 1])
-    centroid_x = sum_over_mask(horizontal_indices, aggregation_axis) / total_pixels
-    centroid_y = sum_over_mask(vertical_indices, aggregation_axis) / total_pixels
+    # Calculate weighted sums directly
+    centroid_x = (masks * horizontal_indices).sum(axis=(1, 2)) / total_pixels_safe
+    centroid_y = (masks * vertical_indices[:, None]).sum(axis=(1, 2)) / total_pixels_safe
 
     return np.column_stack((centroid_x, centroid_y)).astype(int)
 
