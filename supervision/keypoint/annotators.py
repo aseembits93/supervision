@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from logging import warn
 from typing import List, Optional, Tuple, Union
@@ -219,12 +221,12 @@ class VertexLabelAnnotator:
                 boxes. Set to a high value to produce circles.
             smart_position (bool): Spread out the labels to avoid overlap.
         """
-        self.border_radius: int = border_radius
-        self.color: Union[Color, List[Color]] = color
-        self.text_color: Union[Color, List[Color]] = text_color
-        self.text_scale: float = text_scale
-        self.text_thickness: int = text_thickness
-        self.text_padding: int = text_padding
+        self.color = color
+        self.text_color = text_color
+        self.text_scale = text_scale
+        self.text_thickness = text_thickness
+        self.text_padding = text_padding
+        self.border_radius = border_radius
         self.smart_position = smart_position
 
     def annotate(
@@ -321,70 +323,33 @@ class VertexLabelAnnotator:
         if skeletons_count == 0:
             return scene
 
-        anchors = key_points.xy.reshape(points_count * skeletons_count, 2).astype(int)
+        anchors = key_points.xy.reshape(-1, 2).astype(int)
         mask = np.all(anchors != 0, axis=1)
 
         if not np.any(mask):
             return scene
 
-        colors = self.preprocess_and_validate_colors(
-            colors=self.color,
-            points_count=points_count,
-            skeletons_count=skeletons_count,
-        )
+        colors = self.preprocess_and_validate_colors(self.color, points_count, skeletons_count)[mask]
+        text_colors = self.preprocess_and_validate_colors(self.text_color, points_count, skeletons_count)[mask]
+        labels = self.preprocess_and_validate_labels(labels, points_count, skeletons_count)[mask]
 
-        text_colors = self.preprocess_and_validate_colors(
-            colors=self.text_color,
-            points_count=points_count,
-            skeletons_count=skeletons_count,
-        )
-
-        labels = self.preprocess_and_validate_labels(
-            labels=labels, points_count=points_count, skeletons_count=skeletons_count
-        )
-
+        # Only transform anchors once after applying the mask
         anchors = anchors[mask]
-        colors = colors[mask]
-        text_colors = text_colors[mask]
-        labels = labels[mask]
 
-        xyxy = np.array(
-            [
-                self.get_text_bounding_box(
-                    text=label,
-                    font=font,
-                    text_scale=self.text_scale,
-                    text_thickness=self.text_thickness,
-                    center_coordinates=tuple(anchor),
-                )
-                for anchor, label in zip(anchors, labels)
-            ]
-        )
-        xyxy_padded = pad_boxes(xyxy=xyxy, px=self.text_padding)
+        xyxy = np.array([
+            self.get_text_bounding_box(label, font, self.text_scale, self.text_thickness, tuple(anchor))
+            for anchor, label in zip(anchors, labels)
+        ])
+        
+        xyxy_padded = pad_boxes(xyxy, self.text_padding)
 
         if self.smart_position:
             xyxy_padded = spread_out_boxes(xyxy_padded)
-            xyxy = pad_boxes(xyxy=xyxy_padded, px=-self.text_padding)
+            xyxy = pad_boxes(xyxy_padded, px=-self.text_padding)
 
-        for text, color, text_color, box, box_padded in zip(
-            labels, colors, text_colors, xyxy, xyxy_padded
-        ):
-            draw_rounded_rectangle(
-                scene=scene,
-                rect=Rect.from_xyxy(box_padded),
-                color=color,
-                border_radius=self.border_radius,
-            )
-            cv2.putText(
-                img=scene,
-                text=text,
-                org=(box[0], box[3]),
-                fontFace=font,
-                fontScale=self.text_scale,
-                color=text_color.as_bgr(),
-                thickness=self.text_thickness,
-                lineType=cv2.LINE_AA,
-            )
+        for text, color, text_color, box, box_padded in zip(labels, colors, text_colors, xyxy, xyxy_padded):
+            draw_rounded_rectangle(scene, Rect.from_xyxy(box_padded), color, self.border_radius)
+            cv2.putText(scene, text, (box[0], box[3]), font, self.text_scale, text_color.as_bgr(), self.text_thickness, cv2.LINE_AA)
 
         return scene
 
@@ -396,31 +361,18 @@ class VertexLabelAnnotator:
         text_thickness: int,
         center_coordinates: Tuple[int, int],
     ) -> Tuple[int, int, int, int]:
-        text_w, text_h = cv2.getTextSize(
-            text=text,
-            fontFace=font,
-            fontScale=text_scale,
-            thickness=text_thickness,
-        )[0]
+        text_w, text_h = cv2.getTextSize(text, fontFace=font, fontScale=text_scale, thickness=text_thickness)[0]
         center_x, center_y = center_coordinates
-        return (
-            center_x - text_w // 2,
-            center_y - text_h // 2,
-            center_x + text_w // 2,
-            center_y + text_h // 2,
-        )
+        return (center_x - text_w // 2, center_y - text_h // 2, center_x + text_w // 2, center_y + text_h // 2)
 
     @staticmethod
     def preprocess_and_validate_labels(
         labels: Optional[List[str]], points_count: int, skeletons_count: int
     ) -> np.ndarray:
         if labels and len(labels) != points_count:
-            raise ValueError(
-                f"Number of labels ({len(labels)}) must match number of key points "
-                f"({points_count})."
-            )
+            raise ValueError(f"Number of labels ({len(labels)}) must match number of key points ({points_count}).")
         if labels is None:
-            labels = [str(i) for i in range(points_count)]
+            labels = map(str, range(points_count))
 
         return np.array(labels * skeletons_count)
 
@@ -431,12 +383,5 @@ class VertexLabelAnnotator:
         skeletons_count: int,
     ) -> np.ndarray:
         if isinstance(colors, list) and len(colors) != points_count:
-            raise ValueError(
-                f"Number of colors ({len(colors)}) must match number of key points "
-                f"({points_count})."
-            )
-        return (
-            np.array(colors * skeletons_count)
-            if isinstance(colors, list)
-            else np.array([colors] * points_count * skeletons_count)
-        )
+            raise ValueError(f"Number of colors ({len(colors)}) must match number of key points ({points_count}).")
+        return np.array([colors] * points_count * skeletons_count if not isinstance(colors, list) else colors * skeletons_count)
