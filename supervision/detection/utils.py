@@ -437,15 +437,19 @@ def filter_polygons_by_area(
         List[np.ndarray]: A new list of polygons containing only those with
             areas within the specified thresholds.
     """
+    # Early return if no area constraints are specified
     if min_area is None and max_area is None:
         return polygons
-    ares = [cv2.contourArea(polygon) for polygon in polygons]
-    return [
-        polygon
-        for polygon, area in zip(polygons, ares)
-        if (min_area is None or area >= min_area)
-        and (max_area is None or area <= max_area)
-    ]
+
+    filtered_polygons = []
+    for polygon in polygons:
+        area = cv2.contourArea(polygon)
+        # Check area constraints individually to avoid redundant calculations
+        # and improve efficiency
+        if (min_area is None or area >= min_area) and (max_area is None or area <= max_area):
+            filtered_polygons.append(polygon)
+
+    return filtered_polygons
 
 
 def polygon_to_xyxy(polygon: np.ndarray) -> np.ndarray:
